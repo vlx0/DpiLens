@@ -14,6 +14,21 @@ param(
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
+# P/Invoke для перемещения окна за экран и закрытия
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Win {
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll")] public static extern bool CloseWindow(IntPtr hWnd);
+}
+"@
+
+# Флаги SetWindowPos
+$SWP_NOSIZE = 0x0001
+$SWP_NOZORDER = 0x0004
+$SWP_NOACTIVATE = 0x0010
+
 function Find-SettingsWindow {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $classCond = [System.Windows.Automation.PropertyCondition]::new(
@@ -39,6 +54,14 @@ $win = Find-SettingsWindow
 if (-not $win) {
     Write-Output "ERROR: Settings window not found"
     exit 2
+}
+
+# 1a) Перемещаем окно настроек за пределы экрана (X=-2000, Y=-2000).
+# Окно остаётся в UIA-дереве, но визуально полностью невидимо.
+$hwnd = [IntPtr]$win.Current.NativeWindowHandle
+if ($hwnd -ne [IntPtr]::Zero) {
+    [Win]::SetWindowPos($hwnd, [IntPtr]::Zero, -2000, -2000, 0, 0,
+        $SWP_NOSIZE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE) | Out-Null
 }
 
 # 2) Найти combobox масштаба
@@ -123,10 +146,17 @@ foreach ($b in $btns) {
         )) {
             $bInv.Invoke()
             Write-Output "OK clicked 'Sign out now' (you'll need to log back in)"
+            # Закрываем окно настроек (оно свёрнуто)
+            $hwnd2 = [IntPtr]$win.Current.NativeWindowHandle
+            if ($hwnd2 -ne [IntPtr]::Zero) { [Win]::CloseWindow($hwnd2) | Out-Null }
             exit 0
         }
     }
 }
+
+# 8) Закрываем свёрнутое окно настроек, чтобы не висело в таскбаре
+$hwnd3 = [IntPtr]$win.Current.NativeWindowHandle
+if ($hwnd3 -ne [IntPtr]::Zero) { [Win]::CloseWindow($hwnd3) | Out-Null }
 
 Write-Output "OK applied '$Percent%' (no sign-out dialog — change is live)"
 exit 0
